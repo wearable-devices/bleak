@@ -21,6 +21,7 @@ Changed
 Fixed
 -----
 * Fixed handling empty notification payloads in BlueZ backend when using "AcquireNotify". Fixes #1982.
+* Fixed WinRT backend not being able to reconnect to a device in the same process after an ungraceful disconnect. ``handle_disconnect()`` now releases ``GattSession.maintain_connection`` and closes the GATT service objects; previously the leaked ``GattDeviceService`` handle caused Windows to return ``ACCESS_DENIED`` for that service on the next connection, silently dropping it (and its characteristics) from discovery.
 
 `3.0.2`_ (2026-05-02)
 =====================
