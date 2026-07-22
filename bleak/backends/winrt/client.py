@@ -281,9 +281,43 @@ class BleakClientWinRT(BaseBleakClient):
                     )
                     self._max_pdu_size_changed_token = None
 
+                # Explicitly release the OS-level connection-maintenance request
+                # before disposing the session. After an ungraceful drop the
+                # session has already transitioned to CLOSED, so this may raise;
+                # ignore that. Without this, the process keeps a stale
+                # "maintain connection" association to the bonded device that
+                # blocks creating a fresh GattSession in-process (a new process
+                # is unaffected, which is the tell).
+                try:
+                    self._session.maintain_connection = False
+                except OSError:
+                    pass
+
                 logger.debug("closing session")
                 self._session.close()
                 self._session = None
+
+            # Release the GATT service objects too. WinRT is very particular
+            # about services being closed: an open GattDeviceService handle is
+            # held process-wide, and after an ungraceful drop leaving it open
+            # makes Windows return ACCESS_DENIED for that service to any *new*
+            # client in the same process, so the service (and its
+            # characteristics) silently drops out of discovery on reconnect. A
+            # fresh process is unaffected, which is the tell. Closing here
+            # guarantees release the moment the drop is detected, independent of
+            # whether the application later calls disconnect() (and in what
+            # order relative to stop_notify, which can otherwise skip it).
+            if self.services is not None:
+                logger.debug("closing services")
+                for service in self.services:
+                    try:
+                        service.obj.close()
+                    except Exception:
+                        logger.debug(
+                            "%s: error closing service on disconnect", self.address
+                        )
+                self.services = None
+                self._notification_callbacks.clear()
 
         is_connect_complete = False
 
@@ -488,6 +522,13 @@ class BleakClientWinRT(BaseBleakClient):
             self.services = None
 
         if self._session:
+            # Release the OS-level connection-maintenance request before
+            # disposing, so the process doesn't keep a stale association to the
+            # bonded device (see handle_disconnect for the full rationale).
+            try:
+                self._session.maintain_connection = False
+            except OSError:
+                pass
             self._session.close()
             self._session = None
 
